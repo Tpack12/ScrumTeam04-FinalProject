@@ -1,52 +1,98 @@
-from flask import Flask, render_template, request, redirect, url_for, flash
-from stock_api import fetch_stock_data
-from chart_generator import generate_chart
-from utils import validate_date_range
-import pandas as pd
-import os
+from flask import Flask, render_template, request, redirect, url_for, session
+from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime
+import random
+import string
 
 app = Flask(__name__)
-app.secret_key = 'your_secret_key'  # Used for flash messages
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///reservations.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.secret_key = 'your_secret_key_here'
 
-# Load stock symbols from CSV
-def load_stock_symbols():
-    df = pd.read_csv("stocks.csv")
-    return [f"{row['Symbol']} - {row['Name']}" for _, row in df.iterrows()]
+db = SQLAlchemy(app)
 
-@app.route('/', methods=['GET', 'POST'])
+class Reservation(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    passengerName = db.Column(db.String(100), nullable=False)
+    seatRow = db.Column(db.Integer, nullable=False)
+    seatColumn = db.Column(db.Integer, nullable=False)
+    eTicketNumber = db.Column(db.String(50), nullable=False, unique=True)
+    created = db.Column(db.DateTime, default=datetime.utcnow)
+
+class Admin(db.Model):
+    username = db.Column(db.String(100), primary_key=True)
+    password = db.Column(db.String(100), nullable=False)
+
+def get_cost_matrix():
+    return [[100, 75, 50, 100] for _ in range(12)]
+
+
+@app.route('/')
 def index():
-    chart_data = None
-    stock_options = load_stock_symbols()
+    return render_template('index.html')
 
+@app.route('/reserve', methods=['GET', 'POST'])
+def reserve():
     if request.method == 'POST':
-        selected = request.form.get('symbol')
-        if " - " in selected:
-            symbol = selected.split(" - ")[0].strip().upper()
+        fname = request.form['first_name']
+        lname = request.form['last_name']
+        row = int(request.form['seat_row'])
+        col = int(request.form['seat_column'])
+
+        existing = Reservation.query.filter_by(seatRow=row, seatColumn=col).first()
+        if existing:
+            return render_template('reserve.html', error="Seat already reserved.")
+
+        full_name = f"{fname} {lname}"
+        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        new_res = Reservation(passengerName=full_name, seatRow=row, seatColumn=col, eTicketNumber=code)
+        db.session.add(new_res)
+        db.session.commit()
+        return render_template('reserve.html', reservation_code=code)
+
+    return render_template('reserve.html')
+
+@app.route('/admin', methods=['GET', 'POST'])
+def admin_login():
+    if request.method == 'POST':
+        user = request.form['username']
+        pw = request.form['password']
+        admin = Admin.query.filter_by(username=user, password=pw).first()
+        if admin:
+            session['admin'] = user
+            return redirect(url_for('admin_dashboard'))
         else:
-            symbol = selected.strip().upper()
+            return render_template('admin_login.html', error="Invalid credentials.")
+    return render_template('admin_login.html')
 
-        chart_type = request.form.get('chart_type', 'line')
-        time_series = request.form.get('time_series', 'TIME_SERIES_DAILY')
-        start_date = request.form.get('start_date', '')
-        end_date = request.form.get('end_date', '')
+@app.route('/admin/dashboard')
+def admin_dashboard():
+    if 'admin' not in session:
+        return redirect(url_for('admin_login'))
 
-        if not symbol:
-            flash('Please select a stock symbol.')
-            return redirect(url_for('index'))
+    reservations = Reservation.query.all()
+    cost_matrix = get_cost_matrix()
 
-        if not validate_date_range(start_date, end_date):
-            flash('Invalid date range. Please try again.')
-            return redirect(url_for('index'))
+    reserved_seats = {(r.seatRow, r.seatColumn) for r in reservations}
+    
+    total_sales = sum(
+        cost_matrix[r.seatRow][r.seatColumn] for r in reservations
+    )
 
-        data = fetch_stock_data(symbol, time_series)
-        if data:
-            chart_data = generate_chart(data, chart_type, start_date, end_date, symbol)
-            if not chart_data:
-                flash('No chart generated for that range.')
-        else:
-            flash('Failed to retrieve stock data.')
+    return render_template('admin_dashboard.html',
+                           reservations=reservations,
+                           reserved_seats=reserved_seats,
+                           total_sales=total_sales)
 
-    return render_template('index.html', chart_data=chart_data, stock_options=stock_options)
+@app.route('/delete/<int:reservation_id>', methods=['POST'])
+def delete_reservation(reservation_id):
+    if 'admin' not in session:
+        return redirect(url_for('admin_login'))
+
+    reservation = Reservation.query.get_or_404(reservation_id)
+    db.session.delete(reservation)
+    db.session.commit()
+    return redirect(url_for('admin_dashboard'))
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(debug=True)
