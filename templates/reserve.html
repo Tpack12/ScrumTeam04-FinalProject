@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Reserve a Seat</title>
+</head>
+<body>
+    <h1>Seat Reservation</h1>
+
+    <form method="POST" action="{{ url_for('reserve') }}">
+        <label for="first_name">First Name:</label>
+        <input type="text" id="first_name" name="first_name" required><br><br>
+
+        <label for="last_name">Last Name:</label>
+        <input type="text" id="last_name" name="last_name" required><br><br>
+
+        <label for="seat_row">Seat Row (0–11):</label>
+        <input type="number" id="seat_row" name="seat_row" min="0" max="11" required><br><br>
+
+        <label for="seat_column">Seat Column (0–3):</label>
+        <input type="number" id="seat_column" name="seat_column" min="0" max="3" required><br><br>
+
+        <button type="submit">Reserve Seat</button>
+    </form>
+
+    {% if reservation_code %}
+        <p style="color:green;">Reservation successful! Your code is: <strong>{{ reservation_code }}</strong></p>
+    {% endif %}
+
+    {% if error %}
+        <p style="color:red;">{{ error }}</p>
+    {% endif %}
+
+    <br>
+    <a href="{{ url_for('index') }}">Back to Main Menu</a>
+</body>
+</html>
